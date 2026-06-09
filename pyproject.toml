@@ -1,0 +1,8 @@
+[project]
+name = "inbox"
+version = "0.1.0"
+description = "Fetch and print IMAP inbox headers"
+requires-python = ">=3.10"
+
+[dependency-groups]
+dev = ["ruff"]
