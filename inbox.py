@@ -105,16 +105,19 @@ def _list_folders(mails_dir: Path) -> list[str]:
     )
 
 
-def _email_to_html(date_str: str, sender: str, subject: str, body: str) -> str:
+def _email_to_html(
+    date_str: str, sender: str, subject: str, body: str, to_addr: str
+) -> str:
     """Render email as a minimal HTML document."""
     esc = html.escape
     from_line = f"<strong>From:</strong> {esc(sender)}"
+    to_line = f"<strong>To:</strong> {esc(to_addr)}"
     date_line = f"<strong>Date:</strong> {esc(date_str)}"
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{esc(subject)}</title></head>
 <body>
 <h1>{esc(subject)}</h1>
-<p>{from_line}<br>{date_line}</p>
+<p>{from_line}<br>{to_line}<br>{date_line}</p>
 <hr>
 <pre>{esc(body)}</pre>
 </body></html>"""
@@ -143,13 +146,14 @@ def _classify_email(sender: str, subject: str, folders: list[str]) -> str:
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
-def _write_email(  # noqa: PLR0913  # all 6 args needed
+def _write_email(  # noqa: PLR0913  # all 7 args needed
     mails_dir: Path,
     folder: str,
     date_str: str,
     sender: str,
     subject: str,
     body: str,
+    to_addr: str,
 ) -> None:
     """Write an email as an HTML file into the classified folder."""
     folder_path = mails_dir / folder
@@ -158,7 +162,7 @@ def _write_email(  # noqa: PLR0913  # all 6 args needed
     subject_slug = _slugify(subject)
     filename = f"{date_str}-{sender_slug}--{subject_slug}.html"
     filepath = folder_path / filename
-    html_content = _email_to_html(date_str, sender, subject, body)
+    html_content = _email_to_html(date_str, sender, subject, body, to_addr)
     filepath.write_text(html_content, encoding="utf-8")
 
 
@@ -176,6 +180,7 @@ def _process_message(
 
     date_raw = msg["Date"] or ""
     sender = msg["From"] or "(unknown sender)"
+    to_addr = msg["To"] or "(no recipient)"
     subject = msg["Subject"] or "(no subject)"
     date_str = _format_date(date_raw)
     line = f"{date_str[:10]} {date_str[11:].replace('-', ':')}"
@@ -186,7 +191,7 @@ def _process_message(
     print(f"  folder: {_BOLD}{folder}{_RESET}")  # noqa: T201  # CLI output
     touched_folders.add(folder)
 
-    _write_email(mails_dir, folder, date_str, sender, subject, body)
+    _write_email(mails_dir, folder, date_str, sender, subject, body, to_addr)
     _mark_seen(seen_path, mail_id)
 
 
