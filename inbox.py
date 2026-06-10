@@ -230,7 +230,10 @@ def main() -> None:
     seen_ids = _load_seen(seen_path)
     print(f"loaded {len(seen_ids)} seen ids")  # noqa: T201  # CLI output
 
-    accounts = json.loads(os.environ["EMAIL_ACCOUNTS"])
+    try:
+        accounts = json.loads(os.environ["EMAIL_ACCOUNTS"])
+    except KeyError:
+        parser.error("EMAIL_ACCOUNTS environment variable is required")
     touched_folders: set[str] = set()
     for acc in accounts:
         _process_account(acc, seen_ids, mails_dir, seen_path, touched_folders)
