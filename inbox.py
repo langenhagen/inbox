@@ -154,7 +154,11 @@ def _write_email(
 
 
 def _process_message(
-    msg: Message, seen_ids: set[str], mails_dir: Path, seen_path: Path
+    msg: Message,
+    seen_ids: set[str],
+    mails_dir: Path,
+    seen_path: Path,
+    touched_folders: set[str],
 ) -> None:
     """Classify and save one email if not already seen."""
     mail_id = _seen_id(msg)
@@ -170,13 +174,18 @@ def _process_message(
     folders = _list_folders(mails_dir)
     folder = _classify_email(sender, subject, folders)
     print(f"  folder: {_BOLD}{folder}{_RESET}")
+    touched_folders.add(folder)
 
     _write_email(mails_dir, folder, date_str, sender, subject, body)
     _mark_seen(seen_path, mail_id)
 
 
 def _process_account(
-    acc: dict, seen_ids: set[str], mails_dir: Path, seen_path: Path
+    acc: dict,
+    seen_ids: set[str],
+    mails_dir: Path,
+    seen_path: Path,
+    touched_folders: set[str],
 ) -> None:
     """Connect to an IMAP account and classify all inbox messages."""
     print(f"\n=== {acc['user']} ===")
@@ -187,7 +196,7 @@ def _process_account(
     for mid in msg_ids[0].split():
         _, data = conn.fetch(mid, "(BODY.PEEK[])")
         msg = message_from_bytes(data[0][1])
-        _process_message(msg, seen_ids, mails_dir, seen_path)
+        _process_message(msg, seen_ids, mails_dir, seen_path, touched_folders)
     conn.logout()
 
 
@@ -210,8 +219,19 @@ def main() -> None:
     print(f"loaded {len(seen_ids)} seen ids")
 
     accounts = json.loads(os.environ["EMAIL_ACCOUNTS"])
+    touched_folders: set[str] = set()
     for acc in accounts:
-        _process_account(acc, seen_ids, mails_dir, seen_path)
+        _process_account(acc, seen_ids, mails_dir, seen_path, touched_folders)
+
+    if touched_folders:
+        print(f"\n{'=' * 40}")
+        print("Run complete. New mails in:\n")
+        for f in sorted(touched_folders):
+            print(f"  {_BOLD}{f}{_RESET}")
+        print()
+    else:
+        print("Run complete.\n")
+
 
 
 if __name__ == "__main__":
