@@ -13,6 +13,9 @@ from pathlib import Path
 
 from opencode_client import ask
 
+_BOLD = "\033[1m"
+_RESET = "\033[0m"
+
 _MONTHS = {
     "Jan": 1,
     "Feb": 2,
@@ -166,7 +169,7 @@ def _process_message(
     body = _get_text_body(msg)
     folders = _list_folders(mails_dir)
     folder = _classify_email(sender, subject, folders)
-    print(f"  folder: {folder}")
+    print(f"  folder: {_BOLD}{folder}{_RESET}")
 
     _write_email(mails_dir, folder, date_str, sender, subject, body)
     _mark_seen(seen_path, mail_id)
