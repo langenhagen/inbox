@@ -39,7 +39,7 @@ def _get_text_body(msg: Message) -> str:
         try:
             payload = msg.get_payload(decode=True)
             return payload.decode(charset, errors="replace")
-        except Exception:
+        except (UnicodeDecodeError, LookupError):
             return ""
     if msg.is_multipart():
         for part in msg.walk():
@@ -48,7 +48,7 @@ def _get_text_body(msg: Message) -> str:
                 try:
                     payload = part.get_payload(decode=True)
                     return payload.decode(charset, errors="replace")
-                except Exception:
+                except (UnicodeDecodeError, LookupError):
                     return ""
     return ""
 
@@ -70,8 +70,7 @@ def _slugify(text: str) -> str:
     """Replace special chars with hyphens, collapse runs."""
     text = re.sub(r"[^\w\s.-]", "", text)
     text = re.sub(r"[\s.]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text.strip("-")
+    return re.sub(r"-+", "-", text).strip("-")
 
 
 def _seen_id(msg: Message) -> str:
@@ -91,7 +90,7 @@ def _load_seen(path: Path) -> set[str]:
 
 def _mark_seen(path: Path, seen_id: str) -> None:
     """Append a seen email id to the file."""
-    with open(path, "a", encoding="utf-8") as f:
+    with path.open("a", encoding="utf-8") as f:
         f.write(seen_id + "\n")
 
 
@@ -108,13 +107,16 @@ def _list_folders(mails_dir: Path) -> list[str]:
 
 def _email_to_html(date_str: str, sender: str, subject: str, body: str) -> str:
     """Render email as a minimal HTML document."""
+    esc = html.escape
+    from_line = f"<strong>From:</strong> {esc(sender)}"
+    date_line = f"<strong>Date:</strong> {esc(date_str)}"
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>{html.escape(subject)}</title></head>
+<html><head><meta charset="utf-8"><title>{esc(subject)}</title></head>
 <body>
-<h1>{html.escape(subject)}</h1>
-<p><strong>From:</strong> {html.escape(sender)}<br><strong>Date:</strong> {html.escape(date_str)}</p>
+<h1>{esc(subject)}</h1>
+<p>{from_line}<br>{date_line}</p>
 <hr>
-<pre>{html.escape(body)}</pre>
+<pre>{esc(body)}</pre>
 </body></html>"""
 
 
@@ -124,7 +126,8 @@ def _classify_email(sender: str, subject: str, folders: list[str]) -> str:
     prompt = (
         f"Classify this email into one of the existing folders. "
         f"Reply with ONLY a single folder name, no other text.\n\n"
-        f"The sender email address is the primary signal; the subject is secondary context.\n\n"
+        f"The sender email address is the primary signal; "
+        f"the subject is secondary context.\n\n"
         f"Sender: {sender}\n"
         f"Subject: {subject}\n"
         f"Existing folders: {folder_list}\n\n"
@@ -139,8 +142,14 @@ def _classify_email(sender: str, subject: str, folders: list[str]) -> str:
     return name.strip("-") or "misc"
 
 
-def _write_email(
-    mails_dir: Path, folder: str, date_str: str, sender: str, subject: str, body: str
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+def _write_email(  # noqa: PLR0913  # all 6 args needed
+    mails_dir: Path,
+    folder: str,
+    date_str: str,
+    sender: str,
+    subject: str,
+    body: str,
 ) -> None:
     """Write an email as an HTML file into the classified folder."""
     folder_path = mails_dir / folder
@@ -169,11 +178,12 @@ def _process_message(
     sender = msg["From"] or "(unknown sender)"
     subject = msg["Subject"] or "(no subject)"
     date_str = _format_date(date_raw)
-    print(f"{date_str[:10]} {date_str[11:].replace('-', ':')} {sender} :: {subject}")
+    line = f"{date_str[:10]} {date_str[11:].replace('-', ':')}"
+    print(f"{line} {sender} :: {subject}")  # noqa: T201  # CLI output
     body = _get_text_body(msg)
     folders = _list_folders(mails_dir)
     folder = _classify_email(sender, subject, folders)
-    print(f"  folder: {_BOLD}{folder}{_RESET}")
+    print(f"  folder: {_BOLD}{folder}{_RESET}")  # noqa: T201  # CLI output
     touched_folders.add(folder)
 
     _write_email(mails_dir, folder, date_str, sender, subject, body)
@@ -188,22 +198,24 @@ def _process_account(
     touched_folders: set[str],
 ) -> None:
     """Connect to an IMAP account and classify all inbox messages."""
-    print(f"\n=== {acc['user']} ===")
+    print(f"\n=== {acc['user']} ===")  # noqa: T201  # CLI output
     conn = imaplib.IMAP4_SSL(acc["server"], acc["port"])
     conn.login(acc["user"], acc["password"])
     conn.select("INBOX")
     _, msg_ids = conn.search(None, "ALL")
-    for mid in msg_ids[0].split():
-        _, data = conn.fetch(mid, "(BODY.PEEK[])")
-        msg = message_from_bytes(data[0][1])
-        _process_message(msg, seen_ids, mails_dir, seen_path, touched_folders)
+    for mid in (msg_ids[0] if msg_ids else b"").split():
+        _, data = conn.fetch(mid.decode(), "(BODY.PEEK[])")
+        raw = data[0][1] if data and data[0] else b""
+        if isinstance(raw, bytes):
+            msg = message_from_bytes(raw)
+            _process_message(msg, seen_ids, mails_dir, seen_path, touched_folders)
     conn.logout()
 
 
 def main() -> None:
     """Classify and save all inbox messages."""
     parser = argparse.ArgumentParser(
-        description="Classify and sort IMAP emails into topic folders"
+        description="Classify and sort IMAP emails into topic folders",
     )
     parser.add_argument(
         "--output-dir",
@@ -216,7 +228,7 @@ def main() -> None:
     mails_dir.mkdir(parents=True, exist_ok=True)
     seen_path = mails_dir / "seen.txt"
     seen_ids = _load_seen(seen_path)
-    print(f"loaded {len(seen_ids)} seen ids")
+    print(f"loaded {len(seen_ids)} seen ids")  # noqa: T201  # CLI output
 
     accounts = json.loads(os.environ["EMAIL_ACCOUNTS"])
     touched_folders: set[str] = set()
@@ -224,14 +236,13 @@ def main() -> None:
         _process_account(acc, seen_ids, mails_dir, seen_path, touched_folders)
 
     if touched_folders:
-        print(f"\n{'=' * 40}")
-        print("Run complete. New mails in:\n")
+        print(f"\n{'=' * 40}")  # noqa: T201  # CLI output
+        print("Run complete. New mails in:\n")  # noqa: T201  # CLI output
         for f in sorted(touched_folders):
-            print(f"  {_BOLD}{f}{_RESET}")
-        print()
+            print(f"  {_BOLD}{f}{_RESET}")  # noqa: T201  # CLI output
+        print()  # noqa: T201  # CLI output
     else:
-        print("Run complete.\n")
-
+        print("Run complete.\n")  # noqa: T201  # CLI output
 
 
 if __name__ == "__main__":
