@@ -42,6 +42,15 @@ Emails are sorted as HTML files under `~/inbox/<folder>/` by default.
 Pass `--output-dir` (or set `MAILS_DIR`) to choose a different root.  
 The file `seen.txt` in that directory tracks already-processed messages for dedup.
 
+Optionally, place an `extra-context.md` file in the output directory with
+classification hints that is sent to the AI.
+Ideally one statement per line, e.g.:
+```
+- sender dora@acme.com goes to megacorp
+- mails from agatha@mail.com goes to family
+- mails from phrank@ai.net goes to family
+```
+Keep this `extra-context.md` file preferably short.
 
 ## License
 See [LICENSE](LICENSE) file.

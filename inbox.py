@@ -105,8 +105,18 @@ def _list_folders(mails_dir: Path) -> list[str]:
     )
 
 
+def _load_extra_context(mails_dir: Path) -> str:
+    """Return extra-context.md content if it exists, else empty string."""
+    path = mails_dir / "extra-context.md"
+    return path.read_text(encoding="utf-8").strip() if path.exists() else ""
+
+
 def _email_to_html(
-    date_str: str, sender: str, subject: str, body: str, to_addr: str
+    date_str: str,
+    sender: str,
+    subject: str,
+    body: str,
+    to_addr: str,
 ) -> str:
     """Render email as a minimal HTML document."""
     esc = html.escape
@@ -123,7 +133,12 @@ def _email_to_html(
 </body></html>"""
 
 
-def _classify_email(sender: str, subject: str, folders: list[str]) -> str:
+def _classify_email(
+    sender: str,
+    subject: str,
+    folders: list[str],
+    extra_context: str = "",
+) -> str:
     """Use opencode to determine the target folder for an email."""
     folder_list = ", ".join(folders) if folders else "(none)"
     prompt = (
@@ -133,9 +148,17 @@ def _classify_email(sender: str, subject: str, folders: list[str]) -> str:
         f"the subject is secondary context.\n\n"
         f"Sender: {sender}\n"
         f"Subject: {subject}\n"
-        f"Existing folders: {folder_list}\n\n"
-        f"If none fit, suggest a new short name (lowercase, hyphens for spaces) "
-        f"based on the company or topic. Example: fastalyze, github-notifications."
+        f"Existing folders: {folder_list}\n"
+    )
+    if extra_context:
+        prompt += (
+            f"\nExtra context (apply only parts if they are relevant "
+            f"to this specific email):\n{extra_context}\n"
+        )
+    prompt += (
+        "\nIf no existing folder fits, suggest a new short name "
+        "(lowercase, hyphens for spaces) based on the company or topic. "
+        "Example: fastalyze, github-notifications."
     )
     name = ask(prompt)
     name = name.lower().strip()
@@ -187,7 +210,8 @@ def _process_message(
     print(f"{line} {sender} :: {subject}")  # noqa: T201  # CLI output
     body = _get_text_body(msg)
     folders = _list_folders(mails_dir)
-    folder = _classify_email(sender, subject, folders)
+    extra_context = _load_extra_context(mails_dir)
+    folder = _classify_email(sender, subject, folders, extra_context)
     print(f"  folder: {_BOLD}{folder}{_RESET}")  # noqa: T201  # CLI output
     touched_folders.add(folder)
 
