@@ -127,7 +127,11 @@ def _email_to_html(
 <html><head><meta charset="utf-8"><title>{esc(subject)}</title></head>
 <body>
 <h1>{esc(subject)}</h1>
-<p>{from_line}<br>{to_line}<br>{date_line}</p>
+<p>
+{from_line}<br>
+{to_line}<br>
+{date_line}
+</p>
 <hr>
 <pre>{esc(body)}</pre>
 </body></html>"""
