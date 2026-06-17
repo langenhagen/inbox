@@ -7,63 +7,51 @@ import imaplib
 import json
 import os
 import re
+import sys
+from datetime import datetime
 from email import message_from_bytes, utils
 from email.message import Message
 from pathlib import Path
+from typing import cast
 
 from opencode_client import ask
 
 _BOLD = "\033[1m"
 _RESET = "\033[0m"
 
-_MONTHS = {
-    "Jan": 1,
-    "Feb": 2,
-    "Mar": 3,
-    "Apr": 4,
-    "May": 5,
-    "Jun": 6,
-    "Jul": 7,
-    "Aug": 8,
-    "Sep": 9,
-    "Oct": 10,
-    "Nov": 11,
-    "Dec": 12,
-}
+
+def _decode_payload(msg: Message, charset: str) -> str:
+    """Decode a text/plain payload if it is bytes, return None otherwise."""
+    try:
+        payload = cast("bytes", msg.get_payload(decode=True))
+        return payload.decode(charset, errors="replace")
+    except (UnicodeDecodeError, LookupError) as err:
+        err_msg = "Cannot parse message payload!"
+        raise RuntimeError(err_msg) from err
 
 
 def _get_text_body(msg: Message) -> str:
     """Return the plain text body of a message."""
     if msg.get_content_type() == "text/plain":
-        charset = msg.get_content_charset() or "utf-8"
-        try:
-            payload = msg.get_payload(decode=True)
-            return payload.decode(charset, errors="replace")
-        except (UnicodeDecodeError, LookupError):
-            return ""
+        return _decode_payload(msg, msg.get_content_charset() or "utf-8")
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
-                charset = part.get_content_charset() or "utf-8"
-                try:
-                    payload = part.get_payload(decode=True)
-                    return payload.decode(charset, errors="replace")
-                except (UnicodeDecodeError, LookupError):
-                    return ""
+                return _decode_payload(part, part.get_content_charset() or "utf-8")
     return ""
 
 
-def _format_date(date_str: str) -> str:
-    """Parse email Date header and return YYYY-MM-DD-HH-MM-SS in local time."""
-    m = re.search(
-        r"(\d{1,2})\s+(\w{3})\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})",
-        date_str,
-    )
-    if not m:
-        return "unknown-date"
-    day, mon, year, hour, minute, second = m.groups()
-    month = _MONTHS.get(mon, 1)
-    return f"{year}-{month:02d}-{int(day):02d}-{int(hour):02d}-{minute}-{second}"
+def _parse_date(date_str: str) -> datetime | None:
+    """Parse email Date header and return a timezone-aware datetime."""
+    clean = re.sub(r"\s+", " ", date_str).strip()
+    try:
+        return utils.parsedate_to_datetime(clean)
+    except (TypeError, ValueError):
+        print(  # noqa: T201  # CLI warning, not logging
+            f"warning: could not parse date: {date_str!r}",
+            file=sys.stderr,
+        )
+        return None
 
 
 def _slugify(text: str) -> str:
@@ -75,7 +63,9 @@ def _slugify(text: str) -> str:
 
 def _seen_id(msg: Message) -> str:
     """Build a unique id for dedup from Date, sender email, and Subject."""
-    date = _format_date(re.sub(r"\s+", " ", (msg["Date"] or "")).strip())
+    raw = re.sub(r"\s+", " ", (msg["Date"] or "")).strip()
+    dt = _parse_date(raw)
+    date = dt.strftime("%Y-%m-%d-%H-%M-%S") if dt else "unknown-date"
     sender = utils.parseaddr(msg["From"] or "")[1]
     subject = re.sub(r"\s+", " ", (msg["Subject"] or "")).strip()
     return f"{date}|||{sender}|||{subject}"
@@ -112,7 +102,7 @@ def _load_extra_context(mails_dir: Path) -> str:
 
 
 def _email_to_html(
-    date_str: str,
+    dt: datetime | None,
     sender: str,
     subject: str,
     body: str,
@@ -122,7 +112,8 @@ def _email_to_html(
     esc = html.escape
     from_line = f"<strong>From:</strong> {esc(sender)}"
     to_line = f"<strong>To:</strong> {esc(to_addr)}"
-    date_line = f"<strong>Date:</strong> {esc(date_str)}"
+    display_date = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "unknown-date"
+    date_line = f"<strong>Date:</strong> {esc(display_date)}"
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{esc(subject)}</title></head>
 <body>
@@ -173,10 +164,10 @@ def _classify_email(
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
-def _write_email(  # noqa: PLR0913  # all 7 args needed
+def _save_email(  # noqa: PLR0913  # all 7 args needed
     mails_dir: Path,
     folder: str,
-    date_str: str,
+    dt: datetime | None,
     sender: str,
     subject: str,
     body: str,
@@ -187,13 +178,15 @@ def _write_email(  # noqa: PLR0913  # all 7 args needed
     folder_path.mkdir(parents=True, exist_ok=True)
     sender_slug = utils.parseaddr(sender)[1]
     subject_slug = _slugify(subject)
-    filename = f"{date_str}-{sender_slug}--{subject_slug}.html"
+    date_part = dt.strftime("%Y-%m-%d-%H-%M-%S") if dt else "unknown-date"
+    filename = f"{date_part}-{sender_slug}--{subject_slug}.html"
     filepath = folder_path / filename
-    html_content = _email_to_html(date_str, sender, subject, body, to_addr)
+    html_content = _email_to_html(dt, sender, subject, body, to_addr)
     filepath.write_text(html_content, encoding="utf-8")
 
 
-def _process_message(
+# pylint: disable=too-many-locals  # all 11 locals are needed
+def _process_email(
     msg: Message,
     seen_ids: set[str],
     mails_dir: Path,
@@ -209,8 +202,8 @@ def _process_message(
     sender = msg["From"] or "(unknown sender)"
     to_addr = msg["To"] or "(no recipient)"
     subject = msg["Subject"] or "(no subject)"
-    date_str = _format_date(date_raw)
-    line = f"{date_str[:10]} {date_str[11:].replace('-', ':')}"
+    dt = _parse_date(date_raw)
+    line = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "unknown-date"
     print(f"{line} {sender} :: {subject}")  # noqa: T201  # CLI output
     body = _get_text_body(msg)
     folders = _list_folders(mails_dir)
@@ -219,7 +212,7 @@ def _process_message(
     print(f"  folder: {_BOLD}{folder}{_RESET}")  # noqa: T201  # CLI output
     touched_folders.add(folder)
 
-    _write_email(mails_dir, folder, date_str, sender, subject, body, to_addr)
+    _save_email(mails_dir, folder, dt, sender, subject, body, to_addr)
     _mark_seen(seen_path, mail_id)
 
 
@@ -241,7 +234,7 @@ def _process_account(
         raw = data[0][1] if data and data[0] else b""
         if isinstance(raw, bytes):
             msg = message_from_bytes(raw)
-            _process_message(msg, seen_ids, mails_dir, seen_path, touched_folders)
+            _process_email(msg, seen_ids, mails_dir, seen_path, touched_folders)
     conn.logout()
 
 
