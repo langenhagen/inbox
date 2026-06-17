@@ -115,7 +115,8 @@ def _email_to_html(
     display_date = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "unknown-date"
     date_line = f"<strong>Date:</strong> {esc(display_date)}"
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>{esc(subject)}</title></head>
+<html><head><meta charset="utf-8"><title>{esc(subject)}</title>
+<style>pre{{white-space:pre-wrap;overflow-wrap:break-word}}</style></head>
 <body>
 <h1>{esc(subject)}</h1>
 <p>
