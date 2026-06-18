@@ -2,13 +2,13 @@
 """Fetch and sort IMAP emails into folders via opencode classification."""
 
 import argparse
+import datetime as dt
 import html
 import imaplib
 import json
 import os
 import re
 import sys
-from datetime import datetime
 from email import message_from_bytes, utils
 from email.message import Message
 from pathlib import Path
@@ -18,6 +18,8 @@ from opencode_client import ask
 
 _BOLD = "\033[1m"
 _RESET = "\033[0m"
+_RENDER_HTML = True
+_BODY_RE = re.compile(r"<body[^>]*>(.*?)</body>", re.DOTALL | re.IGNORECASE)
 
 
 def _decode_payload(msg: Message, charset: str) -> str:
@@ -41,7 +43,36 @@ def _get_text_body(msg: Message) -> str:
     return ""
 
 
-def _parse_date(date_str: str) -> datetime | None:
+def _get_html_body(msg: Message) -> str | None:
+    """Return the HTML body of a message, or None if not found."""
+    if msg.get_content_type() == "text/html":
+        payload = msg.get_payload(decode=True)
+        if isinstance(payload, bytes):
+            return payload.decode(
+                msg.get_content_charset() or "utf-8",
+                errors="replace",
+            )
+        return None
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/html":
+                payload = part.get_payload(decode=True)
+                if isinstance(payload, bytes):
+                    return payload.decode(
+                        part.get_content_charset() or "utf-8",
+                        errors="replace",
+                    )
+                return None
+    return None
+
+
+def _extract_html_body(html_: str) -> str:
+    """Return content inside <body> tags, or the whole string if not found."""
+    m = _BODY_RE.search(html_)
+    return m[1] if m else html_
+
+
+def _parse_date(date_str: str) -> dt.datetime | None:
     """Parse email Date header and return a timezone-aware datetime."""
     clean = re.sub(r"\s+", " ", date_str).strip()
     try:
@@ -64,8 +95,8 @@ def _slugify(text: str) -> str:
 def _seen_id(msg: Message) -> str:
     """Build a unique id for dedup from Date, sender email, and Subject."""
     raw = re.sub(r"\s+", " ", (msg["Date"] or "")).strip()
-    dt = _parse_date(raw)
-    date = dt.strftime("%Y-%m-%d-%H-%M-%S") if dt else "unknown-date"
+    email_date = _parse_date(raw)
+    date = email_date.strftime("%Y-%m-%d-%H-%M-%S") if email_date else "unknown-date"
     sender = utils.parseaddr(msg["From"] or "")[1]
     subject = re.sub(r"\s+", " ", (msg["Subject"] or "")).strip()
     return f"{date}|||{sender}|||{subject}"
@@ -101,19 +132,25 @@ def _load_extra_context(mails_dir: Path) -> str:
     return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
 
-def _email_to_html(
-    dt: datetime | None,
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+def _email_to_html(  # noqa: PLR0913  # Too many arguments in function definition
+    email_date: dt.datetime | None,
     sender: str,
     subject: str,
     body: str,
     to_addr: str,
+    *,
+    body_is_html: bool,
 ) -> str:
     """Render email as a minimal HTML document."""
     esc = html.escape
     from_line = f"<strong>From:</strong> {esc(sender)}"
     to_line = f"<strong>To:</strong> {esc(to_addr)}"
-    display_date = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "unknown-date"
+    display_date = (
+        email_date.strftime("%Y-%m-%d %H:%M:%S") if email_date else "unknown-date"
+    )
     date_line = f"<strong>Date:</strong> {esc(display_date)}"
+    body_block = body if body_is_html else f"<pre>{esc(body)}</pre>"
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{esc(subject)}</title>
 <style>pre{{white-space:pre-wrap;overflow-wrap:break-word}}</style></head>
@@ -125,7 +162,7 @@ def _email_to_html(
 {date_line}
 </p>
 <hr>
-<pre>{esc(body)}</pre>
+{body_block}
 </body></html>"""
 
 
@@ -168,21 +205,32 @@ def _classify_email(
 def _save_email(  # noqa: PLR0913  # all 7 args needed
     mails_dir: Path,
     folder: str,
-    dt: datetime | None,
+    email_date: dt.datetime | None,
     sender: str,
     subject: str,
     body: str,
     to_addr: str,
+    *,
+    body_is_html: bool,
 ) -> None:
     """Write an email as an HTML file into the classified folder."""
     folder_path = mails_dir / folder
     folder_path.mkdir(parents=True, exist_ok=True)
     sender_slug = utils.parseaddr(sender)[1]
     subject_slug = _slugify(subject)
-    date_part = dt.strftime("%Y-%m-%d-%H-%M-%S") if dt else "unknown-date"
+    date_part = (
+        email_date.strftime("%Y-%m-%d-%H-%M-%S") if email_date else "unknown-date"
+    )
     filename = f"{date_part}-{sender_slug}--{subject_slug}.html"
     filepath = folder_path / filename
-    html_content = _email_to_html(dt, sender, subject, body, to_addr)
+    html_content = _email_to_html(
+        email_date,
+        sender,
+        subject,
+        body,
+        to_addr,
+        body_is_html=body_is_html,
+    )
     filepath.write_text(html_content, encoding="utf-8")
 
 
@@ -203,17 +251,31 @@ def _process_email(
     sender = msg["From"] or "(unknown sender)"
     to_addr = msg["To"] or "(no recipient)"
     subject = msg["Subject"] or "(no subject)"
-    dt = _parse_date(date_raw)
-    line = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "unknown-date"
+    email_date = _parse_date(date_raw)
+    line = email_date.strftime("%Y-%m-%d %H:%M:%S") if email_date else "unknown-date"
     print(f"{line} {sender} :: {subject}")  # noqa: T201  # CLI output
-    body = _get_text_body(msg)
+    if _RENDER_HTML and (html_raw := _get_html_body(msg)):
+        body = _extract_html_body(html_raw)
+        body_is_html = True
+    else:
+        body = _get_text_body(msg)
+        body_is_html = False
     folders = _list_folders(mails_dir)
     extra_context = _load_extra_context(mails_dir)
     folder = _classify_email(sender, subject, folders, extra_context)
     print(f"  folder: {_BOLD}{folder}{_RESET}")  # noqa: T201  # CLI output
     touched_folders.add(folder)
 
-    _save_email(mails_dir, folder, dt, sender, subject, body, to_addr)
+    _save_email(
+        mails_dir,
+        folder,
+        email_date,
+        sender,
+        subject,
+        body,
+        to_addr,
+        body_is_html=body_is_html,
+    )
     _mark_seen(seen_path, mail_id)
 
 
