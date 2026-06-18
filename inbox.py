@@ -140,7 +140,7 @@ def _load_extra_context(mails_dir: Path) -> str:
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
-def _email_to_html(  # noqa: PLR0913  # Too many arguments in function definition
+def _email_to_html(  # noqa: PLR0913  # too-many-arguments
     email_date: dt.datetime | None,
     sender: str,
     subject: str,
@@ -209,7 +209,7 @@ def _classify_email(
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
-def _save_email(  # noqa: PLR0913  # all 7 args needed
+def _save_email(  # noqa: PLR0913  # too-many-arguments
     mails_dir: Path,
     folder: str,
     email_date: dt.datetime | None,
@@ -241,7 +241,7 @@ def _save_email(  # noqa: PLR0913  # all 7 args needed
     filepath.write_text(html_content, encoding="utf-8")
 
 
-# pylint: disable=too-many-locals  # all 11 locals are needed
+# pylint: disable=too-many-locals
 def _process_email(
     msg: Message,
     seen_ids: set[str],
