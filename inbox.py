@@ -21,7 +21,7 @@ _RESET = "\033[0m"
 
 
 def _decode_payload(msg: Message, charset: str) -> str:
-    """Decode a text/plain payload if it is bytes, return None otherwise."""
+    """Decode a text/plain payload, raising RuntimeError on failure."""
     try:
         payload = cast("bytes", msg.get_payload(decode=True))
         return payload.decode(charset, errors="replace")
