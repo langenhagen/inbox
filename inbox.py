@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+from contextlib import suppress
 from email import message_from_bytes, utils
 from email.header import decode_header, make_header
 from email.message import Message
@@ -344,4 +345,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with suppress(KeyboardInterrupt):
+        main()
