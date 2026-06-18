@@ -10,6 +10,7 @@ import os
 import re
 import sys
 from email import message_from_bytes, utils
+from email.header import decode_header, make_header
 from email.message import Message
 from pathlib import Path
 from typing import cast
@@ -30,6 +31,11 @@ def _decode_payload(msg: Message, charset: str) -> str:
     except (UnicodeDecodeError, LookupError) as err:
         err_msg = "Cannot parse message payload!"
         raise RuntimeError(err_msg) from err
+
+
+def _decode_mime_header(raw: str) -> str:
+    """Decode RFC 2047 encoded-word headers (e.g. =?UTF-8?Q?=E2=82=AC?=)."""
+    return str(make_header(decode_header(raw)))
 
 
 def _get_text_body(msg: Message) -> str:
@@ -98,7 +104,7 @@ def _seen_id(msg: Message) -> str:
     email_date = _parse_date(raw)
     date = email_date.strftime("%Y-%m-%d-%H-%M-%S") if email_date else "unknown-date"
     sender = utils.parseaddr(msg["From"] or "")[1]
-    subject = re.sub(r"\s+", " ", (msg["Subject"] or "")).strip()
+    subject = re.sub(r"\s+", " ", _decode_mime_header(msg["Subject"] or "")).strip()
     return f"{date}|||{sender}|||{subject}"
 
 
@@ -248,9 +254,9 @@ def _process_email(
         return
 
     date_raw = msg["Date"] or ""
-    sender = msg["From"] or "(unknown sender)"
-    to_addr = msg["To"] or "(no recipient)"
-    subject = msg["Subject"] or "(no subject)"
+    sender = _decode_mime_header(msg["From"] or "(unknown sender)")
+    to_addr = _decode_mime_header(msg["To"] or "(no recipient)")
+    subject = _decode_mime_header(msg["Subject"] or "(no subject)")
     email_date = _parse_date(date_raw)
     line = email_date.strftime("%Y-%m-%d %H:%M:%S") if email_date else "unknown-date"
     print(f"{line} {sender} :: {subject}")  # noqa: T201  # CLI output
