@@ -22,6 +22,7 @@ _BOLD = "\033[1m"
 _RESET = "\033[0m"
 _RENDER_HTML = True
 _BODY_RE = re.compile(r"<body[^>]*>(.*?)</body>", re.DOTALL | re.IGNORECASE)
+_SCRIPT_RE = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
 
 
 def _decode_payload(msg: Message, charset: str) -> str:
@@ -77,6 +78,11 @@ def _extract_html_body(html_: str) -> str:
     """Return content inside <body> tags, or the whole string if not found."""
     m = _BODY_RE.search(html_)
     return m[1] if m else html_
+
+
+def _strip_scripts(html_: str) -> str:
+    """Remove <script>...</script> blocks from HTML for security reasons."""
+    return _SCRIPT_RE.sub("", html_)
 
 
 def _parse_date(date_str: str) -> dt.datetime | None:
@@ -143,16 +149,16 @@ def _load_extra_context(mails_dir: Path) -> str:
 def _email_to_html(  # noqa: PLR0913  # too-many-arguments
     email_date: dt.datetime | None,
     sender: str,
+    receiver: str,
     subject: str,
     body: str,
-    to_addr: str,
     *,
     body_is_html: bool,
 ) -> str:
     """Render email as a minimal HTML document."""
     esc = html.escape
     from_line = f"<strong>From:</strong> {esc(sender)}"
-    to_line = f"<strong>To:</strong> {esc(to_addr)}"
+    to_line = f"<strong>To:</strong> {esc(receiver)}"
     display_date = (
         email_date.strftime("%Y-%m-%d %H:%M:%S") if email_date else "unknown-date"
     )
@@ -214,9 +220,9 @@ def _save_email(  # noqa: PLR0913  # too-many-arguments
     folder: str,
     email_date: dt.datetime | None,
     sender: str,
+    receiver: str,
     subject: str,
     body: str,
-    to_addr: str,
     *,
     body_is_html: bool,
 ) -> None:
@@ -233,9 +239,9 @@ def _save_email(  # noqa: PLR0913  # too-many-arguments
     html_content = _email_to_html(
         email_date,
         sender,
+        receiver,
         subject,
         body,
-        to_addr,
         body_is_html=body_is_html,
     )
     filepath.write_text(html_content, encoding="utf-8")
@@ -256,13 +262,13 @@ def _process_email(
 
     date_raw = msg["Date"] or ""
     sender = _decode_mime_header(msg["From"] or "(unknown sender)")
-    to_addr = _decode_mime_header(msg["To"] or "(no recipient)")
+    receiver = _decode_mime_header(msg["To"] or "(unknown receiver)")
     subject = _decode_mime_header(msg["Subject"] or "(no subject)")
     email_date = _parse_date(date_raw)
     line = email_date.strftime("%Y-%m-%d %H:%M:%S") if email_date else "unknown-date"
     print(f"{line} {sender} :: {subject}")  # noqa: T201  # CLI output
     if _RENDER_HTML and (html_raw := _get_html_body(msg)):
-        body = _extract_html_body(html_raw)
+        body = _strip_scripts(_extract_html_body(html_raw))
         body_is_html = True
     else:
         body = _get_text_body(msg)
@@ -278,9 +284,9 @@ def _process_email(
         folder,
         email_date,
         sender,
+        receiver,
         subject,
         body,
-        to_addr,
         body_is_html=body_is_html,
     )
     _mark_seen(seen_path, mail_id)
