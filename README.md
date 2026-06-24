@@ -52,5 +52,18 @@ Ideally one statement per line, e.g.:
 ```
 Keep this `extra-context.md` file preferably short.
 
+### Pruning seen.txt
+
+Over time `seen.txt` accumulates entries for emails that may have been deleted
+from disk. Prune those stale entries periodically to keep the `seen.txt` file
+small:
+
+```bash
+uv run prune_seen.py
+uv run prune_seen.py --output-dir ~/my_mails
+```
+
+This removes lines in `seen.txt` whose matching email files no longer exist.
+
 ## License
 See [LICENSE](LICENSE) file.
