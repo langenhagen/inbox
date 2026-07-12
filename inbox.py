@@ -340,14 +340,15 @@ def main() -> None:
     for acc in accounts:
         _process_account(acc, seen_ids, mails_dir, seen_path, touched_folders)
 
+    ts = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if touched_folders:
         print(f"\n{'=' * 40}")  # noqa: T201  # CLI output
-        print("Run complete. New mails in:\n")  # noqa: T201  # CLI output
+        print(f"Run completed at {ts}. New mails in:\n")  # noqa: T201  # CLI output
         for f in sorted(touched_folders):
             print(f"  {_BOLD}{f}{_RESET}")  # noqa: T201  # CLI output
         print()  # noqa: T201  # CLI output
     else:
-        print("Run complete.\n")  # noqa: T201  # CLI output
+        print(f"Run completed at {ts}. No new mails.\n")  # noqa: T201  # CLI output
 
 
 if __name__ == "__main__":
